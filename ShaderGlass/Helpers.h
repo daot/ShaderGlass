@@ -13,6 +13,7 @@ GNU General Public License v3.0
 wchar_t* convertCharArrayToLPCWSTR(const char* charArray);
 BOOL IsAltTabWindow(HWND hwnd);
 std::wstring GetWindowStringText(HWND hwnd);
+std::wstring GetWindowProcessName(HWND hwnd);
 bool HasCaptureAPI();
 bool Is1903();
 bool CanDisableBorder();

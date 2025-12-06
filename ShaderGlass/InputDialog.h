@@ -13,6 +13,7 @@ public:
     InputDialog(HINSTANCE hInstance, HWND mainWindow);
 
     float GetInput(const std::string& label, float existing);
+    std::wstring GetStringInput(const std::wstring& label, const std::wstring& existing);
 
 private:
     HINSTANCE m_instance;

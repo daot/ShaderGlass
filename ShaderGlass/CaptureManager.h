@@ -42,6 +42,9 @@ struct CaptureOptions
     bool         useHDR {false};
     RECT         croppedArea {0, 0, 0, 0};
     bool         vertical {false};
+    std::wstring targetExecutable {};
+    std::wstring targetRegex {};
+    bool         startFullscreen {false};
 };
 
 class CaptureManager
@@ -108,6 +111,7 @@ private:
     DeviceCapture                                     m_deviceCapture;
     CursorEmulator                                    m_cursorEmulator;
     HANDLE                                            m_frameEvent {nullptr};
+    HANDLE                                            m_thread {nullptr};
     HINSTANCE                                         m_instance {0};
     unsigned int                                      m_lastPreset;
 };

@@ -44,6 +44,27 @@ std::wstring GetWindowStringText(HWND hwnd)
     return std::wstring(title);
 }
 
+#include <psapi.h>
+#pragma comment(lib, "Psapi.lib")
+
+std::wstring GetWindowProcessName(HWND hwnd)
+{
+    DWORD pid;
+    GetWindowThreadProcessId(hwnd, &pid);
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if(hProcess)
+    {
+        wchar_t name[MAX_PATH];
+        if(GetModuleBaseNameW(hProcess, NULL, name, MAX_PATH))
+        {
+            CloseHandle(hProcess);
+            return std::wstring(name);
+        }
+        CloseHandle(hProcess);
+    }
+    return std::wstring();
+}
+
 bool HasCaptureAPI()
 {
     if(!hasCaptureAPI.has_value())

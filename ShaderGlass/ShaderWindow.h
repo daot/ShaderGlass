@@ -17,6 +17,7 @@ GNU General Public License v3.0
 #include "CropDialog.h"
 #include "HotkeyDialog.h"
 #include "Helpers.h"
+#include <set>
 
 class ShaderWindow
 {
@@ -86,6 +87,9 @@ private:
     std::vector<std::wstring>     m_recentImports;
     std::map<UINT, HotkeyInfo>    m_hotkeys;
     std::filesystem::path         m_importPath;
+    std::set<HWND>                m_seenWindows;
+    HWND                          m_pendingWindow {nullptr};
+    int                           m_pendingWindowCount {0};
 
     bool         LoadProfile(const std::wstring& fileName);
     void         LoadProfile();
@@ -93,7 +97,7 @@ private:
     void         SaveProfile();
     void         ImportShader();
     bool         ImportShader(const std::wstring& fileName);
-    void         ScanWindows();
+    void         ScanWindows(bool updateMenu = true);
     void         ScanDisplays();
     void         ScanDevices();
     void         CropWindow();

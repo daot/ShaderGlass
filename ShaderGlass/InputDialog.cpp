@@ -11,15 +11,17 @@ GNU General Public License v3.0
 #include "Helpers.h"
 #include "InputDialog.h"
 
-static float   inputValue;
-static LPCWSTR labelText;
-static LPCWSTR startingValue;
+static float        inputValue;
+static std::wstring inputStringValue;
+static bool         stringMode = false;
+static LPCWSTR      labelText;
+static LPCWSTR      startingValue;
 
 InputDialog::InputDialog(HINSTANCE hInstance, HWND mainWindow) : m_instance(hInstance), m_mainWindow(mainWindow) { }
 
 static INT_PTR CALLBACK InputProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    TCHAR lpszInput[16];
+    TCHAR lpszInput[256];
     WORD  cchInput;
 
     switch(message)
@@ -43,7 +45,7 @@ static INT_PTR CALLBACK InputProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
         case IDOK:
             // Get number of characters.
             cchInput = (WORD)SendDlgItemMessage(hDlg, IDC_EDIT1, EM_LINELENGTH, (WPARAM)0, (LPARAM)0);
-            if(cchInput >= 16)
+            if(cchInput >= 256)
             {
                 MessageBox(hDlg, L"Too many characters.", L"Error", MB_OK);
 
@@ -52,6 +54,12 @@ static INT_PTR CALLBACK InputProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
             }
             else if(cchInput == 0)
             {
+                if(stringMode)
+                {
+                    inputStringValue = L"";
+                    EndDialog(hDlg, TRUE);
+                    return TRUE;
+                }
                 EndDialog(hDlg, FALSE);
                 return FALSE;
             }
@@ -68,15 +76,22 @@ static INT_PTR CALLBACK InputProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
 
             // Null-terminate the string.
             lpszInput[cchInput] = 0;
-            try
+            if(stringMode)
             {
-                inputValue = std::stof(lpszInput);
+                inputStringValue = std::wstring(lpszInput);
             }
-            catch(std::exception&)
+            else
             {
-                MessageBox(hDlg, L"Invalid value entered.", L"Error", MB_OK);
-                EndDialog(hDlg, FALSE);
-                return TRUE;
+                try
+                {
+                    inputValue = std::stof(lpszInput);
+                }
+                catch(std::exception&)
+                {
+                    MessageBox(hDlg, L"Invalid value entered.", L"Error", MB_OK);
+                    EndDialog(hDlg, FALSE);
+                    return TRUE;
+                }
             }
 
             EndDialog(hDlg, TRUE);
@@ -95,10 +110,22 @@ static INT_PTR CALLBACK InputProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
 
 float InputDialog::GetInput(const std::string& name, float value)
 {
+    stringMode    = false;
     inputValue    = value;
     labelText     = convertCharArrayToLPCWSTR(name.c_str());
     startingValue = convertCharArrayToLPCWSTR(std::to_string(value).c_str());
     if(DialogBox(m_instance, MAKEINTRESOURCE(IDD_INPUT_DIALOG), m_mainWindow, InputProc) == IDOK)
         return inputValue;
     return NAN;
+}
+
+std::wstring InputDialog::GetStringInput(const std::wstring& label, const std::wstring& existing)
+{
+    stringMode       = true;
+    inputStringValue = existing;
+    labelText        = label.c_str();
+    startingValue    = existing.c_str();
+    if(DialogBox(m_instance, MAKEINTRESOURCE(IDD_INPUT_DIALOG), m_mainWindow, InputProc) == IDOK)
+        return inputStringValue;
+    return std::wstring(); // Return empty on cancel? Or check how to distinguish.
 }

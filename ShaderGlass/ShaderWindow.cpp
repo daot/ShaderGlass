@@ -13,8 +13,10 @@ GNU General Public License v3.0
 #include "CursorEmulator.h"
 
 #include "Shlobj.h"
+#include <regex>
 
 #define TIMER_TITLE 0
+#define TIMER_AUTO_CONNECT 1
 
 ShaderWindow::ShaderWindow(CaptureManager& captureManager) :
     m_captureManager(captureManager), m_captureOptions(captureManager.m_options), m_title(), m_windowClass(), m_toggledNone(false)
@@ -43,6 +45,8 @@ bool ShaderWindow::LoadProfile(const std::wstring& fileName)
         std::string                                       shaderName;
         std::optional<std::wstring>                       shaderPath;
         std::optional<std::wstring>                       windowName;
+        std::optional<std::wstring>                       captureExecutable = !m_captureOptions.targetExecutable.empty() ? std::optional<std::wstring>(m_captureOptions.targetExecutable) : std::nullopt;
+        std::optional<std::wstring>                       captureRegex = !m_captureOptions.targetRegex.empty() ? std::optional<std::wstring>(m_captureOptions.targetRegex) : std::nullopt;
         std::optional<std::wstring>                       deviceName;
         std::optional<std::string>                        deviceFormat;
         std::optional<std::string>                        desktopName;
@@ -65,6 +69,22 @@ bool ShaderWindow::LoadProfile(const std::wstring& fileName)
                 wchar_t wideName[MAX_WINDOW_TITLE];
                 MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, wideName, MAX_WINDOW_TITLE);
                 windowName = std::wstring(wideName);
+            }
+            else if(key == "CaptureExecutable")
+            {
+                wchar_t wideName[MAX_WINDOW_TITLE];
+                MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, wideName, MAX_WINDOW_TITLE);
+                m_captureOptions.targetExecutable = std::wstring(wideName);
+                if(!m_captureOptions.targetExecutable.empty())
+                    captureExecutable = m_captureOptions.targetExecutable;
+            }
+            else if(key == "CaptureRegex")
+            {
+                 wchar_t wideName[MAX_WINDOW_TITLE];
+                 MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, wideName, MAX_WINDOW_TITLE);
+                 m_captureOptions.targetRegex = std::wstring(wideName);
+                 if(!m_captureOptions.targetRegex.empty())
+                     captureRegex = m_captureOptions.targetRegex;
             }
             else if(key == "CaptureDevice")
             {
@@ -281,15 +301,51 @@ bool ShaderWindow::LoadProfile(const std::wstring& fileName)
                     if(d.name == deviceName && f.id == deviceFormat)
                         SendMessage(m_mainWindow, WM_COMMAND, WM_CAPTURE_DEVICE_FORMAT(f.deviceFormatNo), 1);
         }
-        else if(windowName.has_value() && windowName.value().size())
+        else if(windowName.has_value() || captureExecutable.has_value() || captureRegex.has_value())
         {
             ScanWindows();
-            for(unsigned i = 0; i < m_captureWindows.size(); i++)
+            bool found = false;
+            if(windowName.has_value())
             {
-                if(m_captureWindows.at(i).name == windowName.value())
+                for(unsigned i = 0; i < m_captureWindows.size(); i++)
                 {
-                    SendMessage(m_mainWindow, WM_COMMAND, WM_CAPTURE_WINDOW(i), 0);
-                    break;
+                    if(m_captureWindows.at(i).name == windowName.value())
+                    {
+                        SendMessage(m_mainWindow, WM_COMMAND, WM_CAPTURE_WINDOW(i), 0);
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if(!found && captureExecutable.has_value())
+            {
+                for(unsigned i = 0; i < m_captureWindows.size(); i++)
+                {
+                    if(GetWindowProcessName(m_captureWindows.at(i).hwnd) == captureExecutable.value())
+                    {
+                        SendMessage(m_mainWindow, WM_COMMAND, WM_CAPTURE_WINDOW(i), 0);
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if(!found && captureRegex.has_value())
+            {
+                try
+                {
+                    std::wregex re(captureRegex.value(), std::regex_constants::icase);
+                    for(unsigned i = 0; i < m_captureWindows.size(); i++)
+                    {
+                        if(std::regex_search(m_captureWindows.at(i).name, re))
+                        {
+                            SendMessage(m_mainWindow, WM_COMMAND, WM_CAPTURE_WINDOW(i), 0);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                catch(...)
+                {
                 }
             }
         }
@@ -548,17 +604,6 @@ void ShaderWindow::SaveProfile(const std::wstring& fileName)
             outfile << "CaptureFormat " << std::quoted(fi->id) << std::endl;
         }
     }
-    else if(m_captureOptions.captureWindow)
-    {
-        const auto& crop = m_captureOptions.croppedArea;
-        outfile << "CroppedArea \"" << std::to_string(crop.left) << " " << std::to_string(crop.top) << " " << std::to_string(crop.right) << " " << std::to_string(crop.bottom)
-                << "\"" << std::endl;
-
-        auto windowTitle = GetWindowStringText(m_captureOptions.captureWindow);
-        char utfName[MAX_WINDOW_TITLE];
-        WideCharToMultiByte(CP_UTF8, 0, windowTitle.c_str(), -1, utfName, MAX_WINDOW_TITLE, NULL, NULL);
-        outfile << "CaptureWindow " << std::quoted(utfName) << std::endl;
-    }
     else if(m_captureOptions.monitor)
     {
         MONITORINFOEX info;
@@ -567,6 +612,38 @@ void ShaderWindow::SaveProfile(const std::wstring& fileName)
         char utfName[MAX_WINDOW_TITLE];
         WideCharToMultiByte(CP_UTF8, 0, info.szDevice, -1, utfName, MAX_WINDOW_TITLE, NULL, NULL);
         outfile << "CaptureDesktop " << std::quoted(utfName) << std::endl;
+    }
+    else
+    {
+        if(m_captureOptions.captureWindow)
+        {
+            const auto& crop = m_captureOptions.croppedArea;
+            outfile << "CroppedArea \"" << std::to_string(crop.left) << " " << std::to_string(crop.top) << " " << std::to_string(crop.right) << " " << std::to_string(crop.bottom)
+                    << "\"" << std::endl;
+
+            auto windowTitle = GetWindowStringText(m_captureOptions.captureWindow);
+            char utfName[MAX_WINDOW_TITLE];
+            WideCharToMultiByte(CP_UTF8, 0, windowTitle.c_str(), -1, utfName, MAX_WINDOW_TITLE, NULL, NULL);
+            outfile << "CaptureWindow " << std::quoted(utfName) << std::endl;
+        }
+
+        std::wstring execName = m_captureOptions.targetExecutable;
+        if(execName.empty() && m_captureOptions.captureWindow)
+            execName = GetWindowProcessName(m_captureOptions.captureWindow);
+
+        if(!execName.empty())
+        {
+            char utfName[MAX_WINDOW_TITLE];
+            WideCharToMultiByte(CP_UTF8, 0, execName.c_str(), -1, utfName, MAX_WINDOW_TITLE, NULL, NULL);
+            outfile << "CaptureExecutable " << std::quoted(utfName) << std::endl;
+        }
+
+        if(!m_captureOptions.targetRegex.empty())
+        {
+            char utfName[MAX_WINDOW_TITLE];
+            WideCharToMultiByte(CP_UTF8, 0, m_captureOptions.targetRegex.c_str(), -1, utfName, MAX_WINDOW_TITLE, NULL, NULL);
+            outfile << "CaptureRegex " << std::quoted(utfName) << std::endl;
+        }
     }
     for(const auto& pt : m_captureManager.Params())
     {
@@ -746,20 +823,38 @@ BOOL CALLBACK ShaderWindow::EnumWindowsProc(_In_ HWND hwnd, _In_ LPARAM lParam)
             if(GetWindowLong(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)
                 return true;
 
-            CaptureWindow cw(hwnd, GetWindowStringText(hwnd));
-            if(cw.name.size())
-                m_captureWindows.emplace_back(cw);
+            std::wstring name = GetWindowStringText(hwnd);
+            if(name.empty())
+            {
+                wchar_t buf[64];
+                swprintf_s(buf, L"[No Title] (%p)", hwnd);
+                name = buf;
+            }
+
+            CaptureWindow cw(hwnd, name);
+            m_captureWindows.emplace_back(cw);
         }
     }
     return true;
 }
 
-void ShaderWindow::ScanWindows()
+void ShaderWindow::ScanWindows(bool updateMenu)
 {
     m_captureWindows.clear();
-    for(UINT i = 0; i < MAX_CAPTURE_WINDOWS; i++)
+    
+    if(updateMenu)
     {
-        RemoveMenu(m_windowMenu, WM_CAPTURE_WINDOW(i), MF_BYCOMMAND);
+        for(UINT i = 0; i < MAX_CAPTURE_WINDOWS; i++)
+        {
+            RemoveMenu(m_windowMenu, WM_CAPTURE_WINDOW(i), MF_BYCOMMAND);
+        }
+        
+        // Clear any submenus that might have been added
+        int count = GetMenuItemCount(m_windowMenu);
+        for(int i = count - 1; i >= 0; i--)
+        {
+            DeleteMenu(m_windowMenu, i, MF_BYPOSITION);
+        }
     }
 
     if(!HasCaptureAPI())
@@ -767,12 +862,57 @@ void ShaderWindow::ScanWindows()
 
     EnumWindows(&ShaderWindow::EnumWindowsProcProxy, (LPARAM)this);
 
-    UINT i = 0;
-    for(const auto& w : m_captureWindows)
+    if(!updateMenu)
+        return;
+
+    std::map<std::wstring, std::vector<int>> processGroups;
+    for(int i = 0; i < (int)m_captureWindows.size(); i++)
     {
-        AppendMenu(m_windowMenu, MF_STRING, WM_CAPTURE_WINDOW(i++), w.name.c_str());
-        if(m_captureOptions.captureWindow == w.hwnd)
-            CheckMenuItem(m_windowMenu, WM_CAPTURE_WINDOW(i - 1), MF_CHECKED | MF_BYCOMMAND);
+        std::wstring procName = GetWindowProcessName(m_captureWindows[i].hwnd);
+        if(procName.empty())
+            procName = L"Unknown Process";
+        processGroups[procName].push_back(i);
+    }
+
+    for(const auto& group : processGroups)
+    {
+        if(group.second.size() == 1)
+        {
+            int idx = group.second[0];
+            const auto& w = m_captureWindows[idx];
+            AppendMenu(m_windowMenu, MF_STRING, WM_CAPTURE_WINDOW(idx), w.name.c_str());
+            if(m_captureOptions.captureWindow == w.hwnd)
+                CheckMenuItem(m_windowMenu, WM_CAPTURE_WINDOW(idx), MF_CHECKED | MF_BYCOMMAND);
+        }
+        else
+        {
+            HMENU hSub = CreatePopupMenu();
+            // Optional: Add logic to "select the process" if desired, but for now just list windows
+            for(int idx : group.second)
+            {
+                const auto& w = m_captureWindows[idx];
+                AppendMenu(hSub, MF_STRING, WM_CAPTURE_WINDOW(idx), w.name.c_str());
+                if(m_captureOptions.captureWindow == w.hwnd)
+                {
+                    CheckMenuItem(hSub, WM_CAPTURE_WINDOW(idx), MF_CHECKED | MF_BYCOMMAND);
+                    // Also check the parent menu item if one of its children is selected? 
+                    // Standard Windows behavior doesn't support checking top-level items easily if they are popups, but we can try.
+                }
+            }
+            AppendMenu(m_windowMenu, MF_STRING | MF_POPUP, (UINT_PTR)hSub, group.first.c_str());
+            
+            // Check the parent item if current capture is in this group
+            for(int idx : group.second)
+            {
+                if(m_captureOptions.captureWindow == m_captureWindows[idx].hwnd)
+                {
+                    // Find the item we just added (last one)
+                    int lastItem = GetMenuItemCount(m_windowMenu) - 1;
+                    CheckMenuItem(m_windowMenu, lastItem, MF_CHECKED | MF_BYPOSITION);
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -904,6 +1044,10 @@ void ShaderWindow::BuildInputMenu()
     m_displayMenu = GetSubMenu(m_inputMenu, 0);
     m_windowMenu  = GetSubMenu(m_inputMenu, 1);
     m_deviceMenu  = GetSubMenu(m_inputMenu, 2);
+
+    AppendMenu(m_inputMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenu(m_inputMenu, MF_STRING, ID_INPUT_TARGET_EXECUTABLE, L"Target Executable...");
+    AppendMenu(m_inputMenu, MF_STRING, ID_INPUT_TARGET_REGEX, L"Target Regex...");
 }
 
 void ShaderWindow::BuildOutputMenu()
@@ -1561,6 +1705,42 @@ LRESULT CALLBACK ShaderWindow::WndProc(HWND hWnd, UINT message, WPARAM wParam, L
         case IDM_SCREENSHOT:
             Screenshot();
             break;
+        case ID_INPUT_TARGET_EXECUTABLE:
+            StartDialog();
+            {
+                auto val = m_inputDialog->GetStringInput(L"Target Executable Name", m_captureOptions.targetExecutable);
+                if(val != m_captureOptions.targetExecutable)
+                {
+                    m_captureOptions.targetExecutable = val;
+                    m_seenWindows.clear();
+                    if(!val.empty())
+                    {
+                        SetTimer(m_mainWindow, TIMER_AUTO_CONNECT, 1000, NULL);
+                        // Trigger immediate check
+                        SendMessage(m_mainWindow, WM_TIMER, TIMER_AUTO_CONNECT, 0);
+                    }
+                }
+            }
+            EndDialog();
+            break;
+        case ID_INPUT_TARGET_REGEX:
+            StartDialog();
+            {
+                auto val = m_inputDialog->GetStringInput(L"Target Window Title Regex", m_captureOptions.targetRegex);
+                if(val != m_captureOptions.targetRegex)
+                {
+                    m_captureOptions.targetRegex = val;
+                    m_seenWindows.clear();
+                    if(!val.empty())
+                    {
+                        SetTimer(m_mainWindow, TIMER_AUTO_CONNECT, 1000, NULL);
+                        // Trigger immediate check
+                        SendMessage(m_mainWindow, WM_TIMER, TIMER_AUTO_CONNECT, 0);
+                    }
+                }
+            }
+            EndDialog();
+            break;
         case IDM_PAUSE:
             if(m_captureManager.IsActive())
                 Stop();
@@ -1775,7 +1955,8 @@ LRESULT CALLBACK ShaderWindow::WndProc(HWND hWnd, UINT message, WPARAM wParam, L
         case ID_GLOBALHOTKEYS_PAUSE:
         case ID_GLOBALHOTKEYS_ACTIVE:
         case ID_GLOBALHOTKEYS_SHOWMENU:
-        case ID_GLOBALHOTKEYS_CURSOR: {
+        case ID_GLOBALHOTKEYS_CURSOR:
+        case ID_GLOBALHOTKEYS_EXIT: {
             auto globalState = GetHotkeyState();
             if(globalState)
             {
@@ -2030,6 +2211,9 @@ LRESULT CALLBACK ShaderWindow::WndProc(HWND hWnd, UINT message, WPARAM wParam, L
         case ID_GLOBALHOTKEYS_CURSOR:
             SendMessage(hWnd, WM_COMMAND, IDM_INPUT_CAPTURECURSOR, 0);
             break;
+        case ID_GLOBALHOTKEYS_EXIT:
+            SendMessage(hWnd, WM_COMMAND, IDM_EXIT, 0);
+            break;
         }
 
         break;
@@ -2161,6 +2345,117 @@ LRESULT CALLBACK ShaderWindow::WndProc(HWND hWnd, UINT message, WPARAM wParam, L
         case TIMER_TITLE:
             UpdateTitle();
             return 0;
+        case TIMER_AUTO_CONNECT: {
+            if(m_captureOptions.targetExecutable.empty() && m_captureOptions.targetRegex.empty())
+            {
+                KillTimer(m_mainWindow, TIMER_AUTO_CONNECT);
+                m_seenWindows.clear();
+                return 0;
+            }
+
+            ScanWindows(false);
+
+            std::set<HWND>   currentMatches;
+            std::vector<int> matchIndices;
+            std::wregex      re;
+            bool             useRegex = !m_captureOptions.targetRegex.empty();
+
+            if(useRegex)
+            {
+                try
+                {
+                    re.assign(m_captureOptions.targetRegex, std::regex_constants::icase);
+                }
+                catch(...)
+                {
+                    useRegex = false;
+                }
+            }
+
+            for(unsigned i = 0; i < m_captureWindows.size(); i++)
+            {
+                bool matches = false;
+                if(!m_captureOptions.targetExecutable.empty() && GetWindowProcessName(m_captureWindows.at(i).hwnd) == m_captureOptions.targetExecutable)
+                {
+                    matches = true;
+                }
+                else if(useRegex && std::regex_search(m_captureWindows.at(i).name, re))
+                {
+                    matches = true;
+                }
+
+                if(matches)
+                {
+                    currentMatches.insert(m_captureWindows.at(i).hwnd);
+                    matchIndices.push_back(i);
+                }
+            }
+
+            int switchToIndex = -1;
+
+            // 1. Check for NEW windows (not in m_seenWindows)
+            for(int idx : matchIndices)
+            {
+                HWND h = m_captureWindows.at(idx).hwnd;
+                if(m_seenWindows.find(h) == m_seenWindows.end())
+                {
+                    switchToIndex = idx;
+                    break; // Pick the first new window we find (usually top-most)
+                }
+            }
+
+            // 2. If no new windows, but we aren't capturing anything valid, pick the first available match
+            if(switchToIndex == -1)
+            {
+                if(!IsWindow(m_captureOptions.captureWindow) && !matchIndices.empty())
+                {
+                    switchToIndex = matchIndices.front();
+                }
+                // Also handle case where we are capturing a window that is no longer in the match list (e.g. process name changed?)
+                // But generally, if we have a valid capture window that is still in the match list, we stick with it unless a NEW one appears.
+            }
+
+            if(switchToIndex != -1)
+            {
+                HWND foundHwnd = m_captureWindows.at(switchToIndex).hwnd;
+
+                if(m_pendingWindow == foundHwnd)
+                {
+                    m_pendingWindowCount++;
+                }
+                else
+                {
+                    m_pendingWindow      = foundHwnd;
+                    m_pendingWindowCount = 0;
+                }
+
+                if(m_pendingWindowCount >= 2)
+                {
+                    // Only switch if it's actually different (though logic above implies it often will be)
+                    if(m_captureWindows.at(switchToIndex).hwnd != m_captureOptions.captureWindow)
+                    {
+                        SendMessage(m_mainWindow, WM_COMMAND, WM_CAPTURE_WINDOW(switchToIndex), 0);
+                        if(HasCaptureAPI() && !m_captureManager.IsActive())
+                        {
+                            Start();
+                            if(m_captureOptions.startFullscreen)
+                                SendMessage(m_mainWindow, WM_COMMAND, ID_PROCESSING_FULLSCREEN, 0);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                m_pendingWindow      = nullptr;
+                m_pendingWindowCount = 0;
+            }
+
+            // Update seen windows to strictly what is currently matching
+            // This allows a window to be "re-seen" as new if it closes and re-opens (new HWND)
+            // But if it just stays open, it remains in seen.
+            m_seenWindows = currentMatches;
+            return 0;
+        }
         }
         break;
     case WM_DESTROY:
@@ -2845,6 +3140,10 @@ void ShaderWindow::UpdateHotkey(const HotkeyInfo& hk, bool globalState)
         _snwprintf_s(text, 60, L"Toggle Menu\t%s", keyString.c_str());
         ModifyMenu(m_programMenu, IDM_TOGGLEMENU, MF_BYCOMMAND | MF_STRING, IDM_TOGGLEMENU, text);
         break;
+    case ID_GLOBALHOTKEYS_EXIT:
+        _snwprintf_s(text, 60, L"Exit\t%s", keyString.c_str());
+        ModifyMenu(m_programMenu, IDM_EXIT, MF_BYCOMMAND | MF_STRING, IDM_EXIT, text);
+        break;
     }
 }
 
@@ -2856,6 +3155,7 @@ void ShaderWindow::LoadHotkeys()
     m_hotkeys.emplace(ID_GLOBALHOTKEYS_CURSOR, HotkeyInfo(ID_GLOBALHOTKEYS_CURSOR, 0, L"Cursor Key", L"c"));
     m_hotkeys.emplace(ID_GLOBALHOTKEYS_ACTIVE, HotkeyInfo(ID_GLOBALHOTKEYS_ACTIVE, 0, L"Active Key", L"a"));
     m_hotkeys.emplace(ID_GLOBALHOTKEYS_SHOWMENU, HotkeyInfo(ID_GLOBALHOTKEYS_SHOWMENU, 0, L"Menu Key", L"m"));
+    m_hotkeys.emplace(ID_GLOBALHOTKEYS_EXIT, HotkeyInfo(ID_GLOBALHOTKEYS_EXIT, MAKEWORD(VK_ESCAPE, 0), L"Exit Key", L"esc"));
 }
 
 void ShaderWindow::UpdateHotkeys(bool globalHotkeys)
@@ -2895,18 +3195,35 @@ void ShaderWindow::Start(_In_ LPWSTR lpCmdLine, HWND paramsWindow, HWND browserW
         auto cmdLine = GetCommandLineW();
         auto args    = CommandLineToArgvW(cmdLine, &numArgs);
 
+        bool targetFromCli = false;
         for(int a = 1; a < numArgs; a++)
         {
             if(wcscmp(args[a], L"-paused") == 0 || wcscmp(args[a], L"-p") == 0)
                 autoStart = false;
             else if(wcscmp(args[a], L"-fullscreen") == 0 || wcscmp(args[a], L"-f") == 0)
-                fullScreen = true;
-            else if(a == numArgs - 1)
+                m_captureOptions.startFullscreen = true;
+            else if(wcscmp(args[a], L"-exec") == 0 && a + 1 < numArgs)
+            {
+                m_captureOptions.targetExecutable = args[++a];
+                targetFromCli = true;
+            }
+            else if(wcscmp(args[a], L"-regex") == 0 && a + 1 < numArgs)
+            {
+                m_captureOptions.targetRegex = args[++a];
+                targetFromCli = true;
+            }
+            else if(args[a][0] != L'-')
             {
                 std::wstring ws(args[a]);
                 if(ws.size())
                     LoadProfile(ws);
             }
+        }
+
+        if(targetFromCli)
+        {
+            m_captureOptions.captureWindow = NULL;
+            m_captureOptions.monitor = NULL;
         }
     }
 
@@ -2917,12 +3234,52 @@ void ShaderWindow::Start(_In_ LPWSTR lpCmdLine, HWND paramsWindow, HWND browserW
     m_cropDialog.reset(new CropDialog(m_instance, m_mainWindow));
     m_hotkeyDialog.reset(new HotkeyDialog(m_instance, m_mainWindow));
 
+    // If a target is specified, we ALWAYS want to monitor for it (and new instances)
+    if(!m_captureOptions.targetExecutable.empty() || !m_captureOptions.targetRegex.empty())
+    {
+        // Start the monitoring timer immediately
+        SetTimer(m_mainWindow, TIMER_AUTO_CONNECT, 1000, NULL);
+        
+        // Try to find it immediately to avoid a 1s delay if it's already there
+        if(!m_captureOptions.captureWindow)
+        {
+            ScanWindows();
+            bool found = false;
+            
+            // Reusing logic similar to TIMER_AUTO_CONNECT for consistency
+            std::wregex re;
+            bool useRegex = !m_captureOptions.targetRegex.empty();
+            if(useRegex) { try { re.assign(m_captureOptions.targetRegex, std::regex_constants::icase); } catch(...) { useRegex = false; } }
+
+            for(unsigned i = 0; i < m_captureWindows.size(); i++)
+            {
+                bool matches = false;
+                if(!m_captureOptions.targetExecutable.empty() && GetWindowProcessName(m_captureWindows.at(i).hwnd) == m_captureOptions.targetExecutable) matches = true;
+                else if(useRegex && std::regex_search(m_captureWindows.at(i).name, re)) matches = true;
+
+                if(matches)
+                {
+                    SendMessage(m_mainWindow, WM_COMMAND, WM_CAPTURE_WINDOW(i), 0);
+                    found = true;
+                    // Mark as seen so the timer doesn't re-trigger immediately
+                    m_seenWindows.insert(m_captureWindows.at(i).hwnd);
+                    break;
+                }
+            }
+
+            if(!found)
+            {
+                autoStart = false; // defer start until timer finds it
+            }
+        }
+    }
+
     if(autoStart && HasCaptureAPI())
     {
         SendMessage(m_mainWindow, WM_COMMAND, IDM_START, 0);
         SendMessage(m_paramsWindow, WM_COMMAND, IDM_UPDATE_PARAMS, 0);
     }
-    if(fullScreen)
+    if(autoStart && m_captureOptions.startFullscreen)
     {
         SendMessage(m_mainWindow, WM_COMMAND, ID_PROCESSING_FULLSCREEN, 0);
     }

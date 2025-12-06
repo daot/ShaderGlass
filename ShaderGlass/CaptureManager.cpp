@@ -212,7 +212,7 @@ bool CaptureManager::StartSession()
     }
 
     m_active = true;
-    CreateThread(NULL, 0, ThreadFuncProxy, this, 0, NULL);
+    m_thread = CreateThread(NULL, 0, ThreadFuncProxy, this, 0, NULL);
 
     UpdateCursor();
     return true;
@@ -334,6 +334,13 @@ void CaptureManager::Exit()
 
         m_active = false;
         SetEvent(m_frameEvent);
+
+        if(m_thread)
+        {
+            WaitForSingleObject(m_thread, INFINITE);
+            CloseHandle(m_thread);
+            m_thread = nullptr;
+        }
 
         if(m_deviceCapture.m_active)
             m_deviceCapture.Stop();
